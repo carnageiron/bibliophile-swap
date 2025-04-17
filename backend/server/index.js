@@ -1,8 +1,9 @@
-
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -12,55 +13,38 @@ const JWT_SECRET = 'bibliophile-swap-secret'; // In production, use environment 
 app.use(cors());
 app.use(express.json());
 
-// Mock user database (in a real app, this would be a database)
-const users = [];
+// File paths
+const usersFilePath = path.join(__dirname, 'users.json');
+const booksFilePath = path.join(__dirname, 'books.json');
 
-// Mock books database
-const books = [
-  {
-    id: "1",
-    title: "The Great Gatsby",
-    author: "F. Scott Fitzgerald",
-    cover: "/placeholder.svg",
-    isbn: "9780743273565",
-    description: "A classic novel about the American Dream and its corruption in the 1920s.",
-    pageCount: 180,
-    genre: ["Fiction", "Classic"],
-    publishedDate: "1925-04-10",
-    condition: "Good",
-    ownerId: "user1",
-    available: true
-  },
-  {
-    id: "2",
-    title: "To Kill a Mockingbird",
-    author: "Harper Lee",
-    cover: "/placeholder.svg",
-    isbn: "9780061120084",
-    description: "A powerful story of racial inequality in the American South through the eyes of a young girl.",
-    pageCount: 324,
-    genre: ["Fiction", "Classic"],
-    publishedDate: "1960-07-11",
-    condition: "Very Good",
-    ownerId: "user2",
-    available: true
+// Helper functions
+const readData = (filePath) => {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return [];
   }
-];
+};
+
+const writeData = (filePath, data) => {
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+};
 
 // Auth routes
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    
+    const users = readData(usersFilePath);
+
     // Check if user already exists
     if (users.some(user => user.email === email)) {
       return res.status(400).json({ message: 'User already exists' });
     }
-    
+
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
-    
+
     // Create new user
     const userId = `user${users.length + 1}`;
     const newUser = {
@@ -77,19 +61,16 @@ app.post('/api/auth/register', async (req, res) => {
       booksReceived: 0,
       rating: 5
     };
-    
+
     users.push(newUser);
-    
+    writeData(usersFilePath, users);
+
     // Create token
     const token = jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: '1d' });
-    
-    // Return user data (without password) and token
+
     const { password: _, ...userData } = newUser;
-    
-    res.status(201).json({
-      user: userData,
-      token
-    });
+    res.status(201).json({ user: userData, token });
+
   } catch (error) {
     console.error('Register error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -99,29 +80,23 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    // Find user
+    const users = readData(usersFilePath);
+
     const user = users.find(user => user.email === email);
     if (!user) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
-    
-    // Check password
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
-    
-    // Create token
+
     const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '1d' });
-    
-    // Return user data (without password) and token
     const { password: _, ...userData } = user;
-    
-    res.json({
-      user: userData,
-      token
-    });
+
+    res.json({ user: userData, token });
+
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -132,10 +107,8 @@ app.post('/api/auth/login', async (req, res) => {
 const authMiddleware = (req, res, next) => {
   try {
     const token = req.header('x-auth-token');
-    if (!token) {
-      return res.status(401).json({ message: 'No token, authorization denied' });
-    }
-    
+    if (!token) return res.status(401).json({ message: 'No token, authorization denied' });
+
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
@@ -146,24 +119,23 @@ const authMiddleware = (req, res, next) => {
 
 // Book routes
 app.get('/api/books', (req, res) => {
+  const books = readData(booksFilePath);
   res.json(books);
 });
 
 app.get('/api/books/:id', (req, res) => {
+  const books = readData(booksFilePath);
   const book = books.find(book => book.id === req.params.id);
-  if (!book) {
-    return res.status(404).json({ message: 'Book not found' });
-  }
+  if (!book) return res.status(404).json({ message: 'Book not found' });
   res.json(book);
 });
 
-// Protected routes
+// Protected route
 app.get('/api/profile', authMiddleware, (req, res) => {
+  const users = readData(usersFilePath);
   const user = users.find(user => user.id === req.user.id);
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-  
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
   const { password, ...userData } = user;
   res.json(userData);
 });
